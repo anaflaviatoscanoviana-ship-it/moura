@@ -1,0 +1,11 @@
+
+import pandas as pd
+import plotly.express as px
+
+# Lê seu CSV
+df = pd.read_csv("dados_2025-08-29_14-34-55.csv")
+
+# Supondo que a 1ª coluna seja tempo e a 2ª valores
+fig = px.line(df, x=df.columns[0], y=df.columns[1], title="Gráfico de Dados CSV")
+fig.show()
+
