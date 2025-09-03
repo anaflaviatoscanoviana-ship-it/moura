@@ -17,13 +17,17 @@ import matplotlib.pyplot as plt
 from collections import deque
 from matplotlib.ticker import FuncFormatter
 
+import numpy as np
+from scipy.integrate import cumulative_trapezoid
 
+
+# ... (O resto do seu código inicial, como a função saveFile, permanece o mesmo) ...
 # Configure os parâmetros a seguir
-deviceDescription = "DemoDevice,BID#0"
+deviceDescription = "USB-4716,BID#1"
 profilePath = u"C:/Advantech/DAQNavi/Examples/profile/USB-4716.xml"
 
 startChannel = 0
-channelCount = 2
+channelCount = 1
 
 sectionLength = 100
 sectionCount = 0 # 0 = Modo Streaming (contínuo)
@@ -56,8 +60,8 @@ def saveFile(dados_coletados):
                 timestamp, valores = amostra_completa
 
                 # Verifica se os valores de ambos os canais atendem à condição
-                #if valores[0] > 0.001 and valores[1] > 0.001:
-                if True: # Descomente esta linha para salvar todos os dados, ignorando a condição
+                if valores[0] > 0.001: # Condição ajustada para canal único
+                #if True: # Descomente esta linha para salvar todos os dados, ignorando a condição
                 
                     # O bloco abaixo só executa se a condição 'if' for verdadeira.
                     
@@ -70,7 +74,8 @@ def saveFile(dados_coletados):
                     # Escreve a linha no arquivo
                     f.write(linha + "\n")
                     
-            print(f"Arquivo '{nome_do_arquivo}' salvo com sucesso!")
+        print(f"Arquivo '{nome_do_arquivo}' salvo com sucesso!")
+
 
 def AdvPollingStreamingAI():
     ret = ErrorCode.Success
@@ -81,31 +86,12 @@ def AdvPollingStreamingAI():
 
     dados_coletados = []
 
-    # Preparar os dados para o gráfico em tempo real
-    # Usamos deque com 'maxlen' para manter apenas as últimas 500 amostras na tela,
-    # evitando que o gráfico fique lento com o tempo.
-    max_plot_points = 500
-    eixo_x_ms = deque(maxlen=max_plot_points)
-    eixo_y_ch0 = deque(maxlen=max_plot_points)
-    eixo_y_ch1 = deque(maxlen=max_plot_points)
+    # --- ALTERAÇÃO 1: Preparar listas para armazenar TODOS os dados para o gráfico ---
+    # Usamos listas normais em vez de 'deque' com 'maxlen'
+    eixo_x_ms = []
+    eixo_y_ch0 = []
 
-    # NOVO: Configurar o gráfico
-    plt.ion() # Habilita o modo interativo
-    fig, ax = plt.subplots() # Cria a figura e os eixos do gráfico
-    ax.set_xlabel("Tempo Decorrido (ms)")
-    ax.set_xlabel("Horário da Coleta")
-    ax.set_ylabel("Valor Lido (V)")
-    ax.grid(True)
-
-    def format_ms(x, pos):
-        return f'{int(x)} ms'
-    ax.xaxis.set_major_formatter(FuncFormatter(format_ms))
-
-    # O plot inicial agora usa a nova variável
-    line0, = ax.plot(eixo_x_ms, eixo_y_ch0, 'r-', label=f'Canal {startChannel}')    # Linha vermelha
-    line1, = ax.plot(eixo_x_ms, eixo_y_ch1, 'b-', label=f'Canal {startChannel + 1}') # Linha azul
-
-    ax.legend()
+    # A configuração e exibição do gráfico foram movidas para depois do loop de coleta.
 
     for _ in range(1):
         # Carrega o perfil para inicializar o dispositivo
@@ -129,71 +115,42 @@ def AdvPollingStreamingAI():
             break
 
         # Passo 4: Coletar dados em tempo real
-        print("Coleta de dados em progresso... Pressione qualquer tecla para parar e salvar.")
+        print("Coleta de dados em progresso... Pressione qualquer tecla para parar.")
 
         # --- LÓGICA DE TIMESTAMP MELHORADA ---
-        # 1. Marca o tempo de início exato da aquisição
         hora_inicio_coleta = datetime.datetime.now()
-        
-        # 2. Calcula a taxa de amostragem para cada canal individualmente
-        #    Se a taxa total é 2000 Hz para 2 canais, então cada canal tem 1000 amostras/segundo.
         taxa_por_canal = wfAiCtrl.conversion.clockRate / channelCount
         intervalo_por_amostra = datetime.timedelta(seconds=1.0 / taxa_por_canal)
-        
-        # 3. Mantém um contador de quantas amostras (por canal) já foram processadas
         contador_amostras_processadas = 0
-        # --- FIM DA MELHORIA ---
 
         while not kbhit():
-            #time.sleep( 1 / 10)
             result = wfAiCtrl.getData(USER_BUFFER_SIZE, -1)
             ret, returnedCount, data, = result[0], result[1], result[2]
-            #print(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-            #print("Read: ",returnedCount)
-            #print("data: ",data)
+
             if BioFailed(ret):
                 break
-            #if returnedCount > 0 and statistics.mean(data) > 0.01:
-            if returnedCount > 0:
-                count = 0
+                
+            if returnedCount > 0 and statistics.mean(data) > 0.01:
                 for i in range(0, returnedCount, channelCount):
-                    count = count + 1
                     amostras_da_leitura = data[i : i + channelCount]
-                if (len(amostras_da_leitura) == channelCount):
-                        # --- CÁLCULO PRECISO DO TIMESTAMP ---
-                        # Pega o índice da amostra dentro do bloco atual (0, 1, 2, ...)
+                    if (len(amostras_da_leitura) == channelCount):
                         indice_no_bloco = i // channelCount
-                        
-                        # Calculs
-                        # a o deslocamento de tempo desde o início da coleta
                         deslocamento_total = (contador_amostras_processadas + indice_no_bloco) * intervalo_por_amostra
                         timestamp_exato = hora_inicio_coleta + deslocamento_total
-                        # --- FIM DO CÁLCULO ---
                         
+                        # Armazena todos os dados para o arquivo CSV
                         dados_coletados.append((timestamp_exato, amostras_da_leitura))
                         
-                        # 1. Calcula a diferença de tempo desde o início
+                        # --- ALTERAÇÃO 2: Apenas coleta os dados para o gráfico, sem desenhar ---
                         delta_tempo = timestamp_exato - hora_inicio_coleta
-                        # 2. Converte essa diferença para milissegundos
                         tempo_decorrido_ms = delta_tempo.total_seconds() * 1000
                         
-                        # 3. Adiciona o valor em milissegundos ao eixo X do gráfico
                         eixo_x_ms.append(tempo_decorrido_ms)
-
-                        eixo_y_ch0.append(amostras_da_leitura[0]) # Primeiro valor vai para o Canal 0
-                        eixo_y_ch1.append(amostras_da_leitura[1]) # Segundo valor vai para o Canal 1
-
-                line0.set_data(eixo_x_ms, eixo_y_ch0)
-                line1.set_data(eixo_x_ms, eixo_y_ch1)
-                
-                ax.relim()
-                ax.autoscale_view()
-                plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-                fig.canvas.draw()
-                fig.canvas.flush_events()
+                        eixo_y_ch0.append(amostras_da_leitura[0])
                 
                 contador_amostras_processadas += (returnedCount // channelCount)
-            
+        
+        print("\nColeta interrompida pelo usuário.")
         # Passo 6: Parar a operação
         ret = wfAiCtrl.stop()
 
@@ -201,17 +158,56 @@ def AdvPollingStreamingAI():
     wfAiCtrl.release()
     wfAiCtrl.dispose()
 
-    nome_arquivo_grafico = datetime.datetime.now().strftime("grafico_%Y-%m-%d_%H-%M-%S.png")
-    fig.savefig(nome_arquivo_grafico)
+    print("Gerando gráfico final...")
 
+    #  CALCULAR A INTEGRAL 
+    if len(eixo_x_ms) > 1: # Precisa de pelo menos 2 pontos para integrar
+        tempo_segundos = np.array(eixo_x_ms) / 1000.0
+        tensao_volts = np.array(eixo_y_ch0)
+        sinal_integrado = cumulative_trapezoid(tensao_volts, tempo_segundos, initial=0)
+    else:
+        sinal_integrado = [] # Não há dados suficientes para integrar
+
+    # ACRESCENTAR O BLOCO DE PLOTAGEM QUE VOCÊ ENVIOU
+    # Configura a figura e o eixo principal (para o sinal original)
+    fig, ax1 = plt.subplots()
+
+    # Plot do sinal original (eixo Y à esquerda)
+    cor_original = 'r'
+    ax1.set_xlabel("Tempo Decorrido (ms)")
+    ax1.set_ylabel("Valor Lido (V)", color=cor_original)
+    ax1.plot(eixo_x_ms, eixo_y_ch0, color=cor_original, label='Sinal Original (V)')
+    ax1.tick_params(axis='y', labelcolor=cor_original)
+    ax1.grid(True)
+
+    # Cria um segundo eixo Y que compartilha o mesmo eixo X
+    ax2 = ax1.twinx()
+    cor_integrado = 'b'
+    ax2.set_ylabel('Sinal Integrado (V·s)', color=cor_integrado)
+    # Plot do sinal integrado (eixo Y à direita)
+    ax2.plot(eixo_x_ms, sinal_integrado, color=cor_integrado, linestyle='--', label='Sinal Integrado (V·s)')
+    ax2.tick_params(axis='y', labelcolor=cor_integrado)
+
+    # Título e legenda
+    ax1.set_title("Sinal Original vs. Sinal Integrado")
+    fig.tight_layout() # Ajusta o layout para não cortar os labels
+    
+    # Combina as legendas dos dois eixos
+    lines, labels = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines + lines2, labels + labels2, loc='best')
+
+    # Salva o gráfico em um arquivo de imagem
+    nome_arquivo_grafico = datetime.datetime.now().strftime("grafico_%Y-%m-%d_%H-%M-%S.png")
     fig.savefig(nome_arquivo_grafico, bbox_inches='tight')
     print(f"Gráfico final salvo como '{nome_arquivo_grafico}'")
+
+    # Salva os dados brutos no arquivo CSV
     saveFile(dados_coletados)
 
-    #  Desliga o modo interativo e mostra o gráfico final
-    plt.ioff()
+    # Exibe o gráfico na tela
+    print("Exibindo gráfico. Feche a janela para finalizar o programa.")
     plt.show()
-
 
     if BioFailed(ret):
         enumStr = AdxEnumToString("ErrorCode", ret.value, 256)
